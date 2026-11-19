@@ -152,6 +152,12 @@ struct NativeRootTabsRenderer: View {
         let searchDebounceMs = node.props.getInt("nav_search_debounce_ms", default: 250)
         let searchOnQueryCb = Int(node.props.getCallbackId("nav_search_on_query"))
         let searchOnSubmitCb = Int(node.props.getCallbackId("nav_search_on_submit"))
+        // The query the published search items answer (absent before the
+        // first answer), so the results view can wait rather than say
+        // "No Results" for a query PHP hasn't answered yet.
+        let searchAnsweredQuery: String? = node.props.has("nav_search_answered_query")
+            ? node.props.getString("nav_search_answered_query")
+            : nil
         // Each search item is a `search_item` child node of the tabs
         // root (parallel to `bottom_nav_item`). PHP couldn't carry the
         // mixed string/object/element item shapes through the prop
@@ -335,6 +341,7 @@ struct NativeRootTabsRenderer: View {
                         mode: searchMode,
                         onQueryCallbackId: searchOnQueryCb,
                         onSubmitCallbackId: searchOnSubmitCb,
+                        answeredQuery: searchAnsweredQuery,
                         debounceMs: searchDebounceMs
                     )
                     .modifier(SystemTabBarSuppressionModifier(
@@ -1327,6 +1334,7 @@ private struct SearchTabContainer: View {
     let mode: String
     let onQueryCallbackId: Int
     let onSubmitCallbackId: Int
+    let answeredQuery: String?
     let debounceMs: Int
 
     @State private var query: String = ""
@@ -1334,7 +1342,7 @@ private struct SearchTabContainer: View {
 
     var body: some View {
         NavigationStack {
-            NativeSearchTabRoot(query: query, itemNodes: itemNodes, mode: mode)
+            NativeSearchTabRoot(query: query, answeredQuery: answeredQuery, itemNodes: itemNodes, mode: mode)
                 // The search tab is declared as a sibling of the `ForEach`,
                 // so it never passes through `PerTabContent` and needs the
                 // window background applied here. Inside the NavigationStack,
@@ -1387,6 +1395,8 @@ private struct SearchTabContainer: View {
 ///                   returns new items via `search_item` children next publish.
 private struct NativeSearchTabRoot: View {
     let query: String
+    /// The query `itemNodes` answer, in dynamic mode; nil before the first.
+    let answeredQuery: String?
     let itemNodes: [NativeUINode]
     let mode: String
 
@@ -1446,6 +1456,10 @@ private struct NativeSearchTabRoot: View {
                             "Type to search",
                             systemImage: "magnifyingglass"
                         )
+                    } else if answeredQuery != query {
+                        // PHP hasn't answered this query yet (debounce or a
+                        // slow onSearchQuery): no items isn't no results.
+                        ProgressView()
                     } else {
                         ContentUnavailableView.search(text: query)
                     }
