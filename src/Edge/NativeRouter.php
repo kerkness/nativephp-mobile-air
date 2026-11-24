@@ -186,6 +186,24 @@ class NativeRouter
     protected array $stack = [];
 
     /**
+     * The other tabs' stacks, by tab URL, while one tab is shown.
+     *
+     * Native tab chrome gives every tab its own history (a NavigationStack
+     * per tab on iOS), and reconciles a publish by the stack's depth
+     * relative to that tab's root. With one PHP stack for all tabs, a tab
+     * tap replaced the top screen with the other tab's root, so every
+     * tab's screens piled into one history: the depth stopped matching the
+     * tab's own, pushes landed as the tab's root (no back button, taps that
+     * seemed to do nothing), and Back replayed screens of other tabs.
+     *
+     * So `$stack` is the shown tab's history only. Moving to another tab
+     * parks it here and brings that tab's back, as it was left.
+     *
+     * @var array<string, array<int, array{component: NativeComponent, uri: string, params: array}>>
+     */
+    protected array $parkedStacks = [];
+
+    /**
      * Deferred transition — set during navigation, flushed just before
      * the first publish() so the old tree stays visible until the new
      * one is ready.
@@ -823,6 +841,10 @@ class NativeRouter
                         return $intent->uri;
                     }
 
+                    // Into another tab: pushed onto that tab's own history.
+                    unset($entry);
+                    $this->switchTabs($intent, $component);
+
                     static::debugLog("NAVIGATE: resolved to {$resolved['class']}, deferring transition");
                     $this->deferredTransition = $intent->transition ?? Transition::SlideFromRight;
 
@@ -886,11 +908,27 @@ class NativeRouter
                     }
 
                     static::debugLog("REPLACE: resolved to {$resolved['class']}");
-                    $this->unmountComponent($component);
-                    array_pop($this->stack);
+
+                    // A tab tapped (a replace with its URL) shows that tab's
+                    // own history; the screen left stays parked in its tab.
+                    unset($entry);
+                    $switched = $this->switchTabs($intent, $component);
+
+                    if ($switched === 'resume') {
+                        static::debugLog('REPLACE: resuming the tab, stack='.count($this->stack));
+                        $this->deferredTransition = $intent->transition ?? Transition::None;
+                        $freshPush = false;
+
+                        break;
+                    }
+
+                    if ($switched === null) {
+                        $this->unmountComponent($component);
+                        array_pop($this->stack);
+                    }
 
                     static::debugLog('REPLACE: deferring transition, stack='.count($this->stack));
-                    $this->deferredTransition = $intent->transition ?? Transition::Fade;
+                    $this->deferredTransition = $intent->transition ?? ($switched ? Transition::None : Transition::Fade);
 
                     try {
                         static::debugLog("REPLACE: creating component {$resolved['class']}");
@@ -1003,6 +1041,133 @@ class NativeRouter
             }
         } catch (\Throwable $e) {
             static::debugLog('lifecycle event failed: '.$e->getMessage());
+        }
+    }
+
+    /**
+     * Move to another tab's history, when a navigation leads into another
+     * tab of the layout (see $parkedStacks).
+     *
+     *  - null: not a move between tabs; the caller navigates as usual. A
+     *    replace out of the tabs altogether (signing out) also lets the
+     *    parked tabs go.
+     *  - 'resume': a tab was tapped (a replace with the tab's own URL and no
+     *    data) and it has a history: its top screen is shown as it was left.
+     *  - 'push': the caller pushes the intent's screen onto the tab's
+     *    history. A tab opened at a screen below its root gets the root
+     *    beneath it, so Back leads there. A replace to the tab's URL with
+     *    data, or into a tab not yet visited, starts the tab afresh with the
+     *    intent's screen as its root.
+     *
+     * The screen being left stays mounted, parked on top of its tab's
+     * history; the caller must not unmount it.
+     */
+    protected function switchTabs(NavigationIntent $intent, NativeComponent $from): ?string
+    {
+        $toTab = $this->tabOf($intent->uri, $from);
+
+        if ($toTab === null) {
+            if ($intent->type === NavigationIntent::REPLACE) {
+                $this->discardParkedStacks();
+            }
+
+            return null;
+        }
+
+        $fromTab = $this->tabOf($this->stack[0]['uri'] ?? '', $from);
+
+        if ($fromTab === null || $fromTab === $toTab) {
+            return null;
+        }
+
+        static::debugLog("TABS: $fromTab -> $toTab");
+
+        $this->parkedStacks[$fromTab] = $this->stack;
+        $this->stack = $this->parkedStacks[$toTab] ?? [];
+        unset($this->parkedStacks[$toTab]);
+
+        if (static::pathOf($intent->uri) === static::pathOf($toTab)) {
+            if ($intent->type === NavigationIntent::REPLACE && $this->stack !== []
+                && $intent->data === [] && static::queryOf($intent->uri) === []) {
+                return 'resume';
+            }
+
+            // Afresh: the intent's own screen is the root.
+            $this->unmountStack($this->stack);
+            $this->stack = [];
+
+            return 'push';
+        }
+
+        if ($this->stack === []) {
+            $this->preloadStack([['uri' => $toTab]]);
+        }
+
+        return 'push';
+    }
+
+    /**
+     * The URL of the layout tab that owns this URI: the tab whose path is the
+     * longest prefix of its path, the rule the tab chrome uses to decide
+     * which tab a publish belongs to. Null outside a tabbed layout.
+     */
+    protected function tabOf(string $uri, NativeComponent $screen): ?string
+    {
+        if ($uri === '' || ($resolved = static::resolve($uri)) === null) {
+            return null;
+        }
+
+        $layoutClass = $resolved['layout'] ?? null;
+
+        if (! is_string($layoutClass) || ! class_exists($layoutClass)) {
+            return null;
+        }
+
+        try {
+            $tabs = (new $layoutClass)->tabBar($screen)?->getTabs() ?? [];
+        } catch (\Throwable $e) {
+            static::debugLog('tabOf: '.$e->getMessage());
+
+            return null;
+        }
+
+        $path = static::pathOf($uri);
+        $owner = null;
+        $ownerLength = -1;
+
+        foreach ($tabs as $tab) {
+            $tabUrl = $tab->getUrl();
+
+            if ($tabUrl === '' || $tab->isSearchTab()) {
+                continue;
+            }
+
+            $tabPath = static::pathOf($tabUrl);
+
+            if (($path === $tabPath || str_starts_with($path, $tabPath.'/')) && strlen($tabPath) > $ownerLength) {
+                $owner = $tabUrl;
+                $ownerLength = strlen($tabPath);
+            }
+        }
+
+        return $owner;
+    }
+
+    /** The parked tabs' screens, unmounted: the app has left its tabs. */
+    protected function discardParkedStacks(): void
+    {
+        foreach ($this->parkedStacks as $stack) {
+            $this->unmountStack($stack);
+        }
+
+        $this->parkedStacks = [];
+    }
+
+    /** @param  array<int, array{component: NativeComponent}>  $stack */
+    protected function unmountStack(array $stack): void
+    {
+        foreach (array_reverse($stack) as $entry) {
+            $this->unmountComponent($entry['component']);
         }
     }
 
