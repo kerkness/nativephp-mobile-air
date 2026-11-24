@@ -22,6 +22,9 @@ namespace Native\Mobile\Edge\Layouts\Builders;
  * is equivalent to `TabBarOptions::make()->hidden()`. Use either; if
  * both are set, the explicit builder wins.
  *
+ * `->hidden(false)` does the opposite on iOS: it keeps the bar on a pushed
+ * screen, where iOS hides it by default (a list moved around in, say).
+ *
  * Per-screen tab content overrides (insert/remove tabs) are intentionally
  * out of scope — that complicates merge semantics and creates UX where
  * tabs change identity per screen. Define your tabs once at the layout

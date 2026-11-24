@@ -997,6 +997,10 @@ abstract class NativeComponent
             // re-derive visibility from URI matching or `nav_back`.
             if ($this->shouldHideTabBar()) {
                 $attrs['hideTabBar'] = true;
+            } elseif ($this->tabBarOptions()?->hidden === false) {
+                // An explicit `hidden(false)` keeps the bar on a pushed
+                // screen too, where iOS would hide it.
+                $attrs['showTabBar'] = true;
             }
             // Per-screen nav-bar opt-out, same shape as `hideTabBar` — the
             // renderers hide the toolbar for this destination only.

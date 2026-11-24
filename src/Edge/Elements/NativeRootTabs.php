@@ -134,6 +134,9 @@ class NativeRootTabs extends Element
         if (isset($attrs['hideTabBar'])) {
             $this->props['hide_tab_bar'] = (bool) $attrs['hideTabBar'];
         }
+        if (isset($attrs['showTabBar'])) {
+            $this->props['show_tab_bar'] = (bool) $attrs['showTabBar'];
+        }
         // Per-screen nav-bar opt-out — hides the top toolbar for the
         // active destination while the NavigationStack itself survives.
         if (isset($attrs['hideNavBar'])) {

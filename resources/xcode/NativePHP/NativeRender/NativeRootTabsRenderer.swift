@@ -603,6 +603,8 @@ private struct PerTabContent: View {
         // request hiding — useful for tab-root screens that want the bar
         // hidden anyway, which path-depth alone can't express.
         let forceHideTabBar = root.props.getBool("hide_tab_bar")
+        // `tabBarOptions()->hidden(false)`: keep the bar on a pushed level.
+        let forceShowTabBar = root.props.getBool("show_tab_bar")
         // Per-screen nav-bar opt-out (PHP-side `$hidesNavBar` /
         // `navigationOptions()->hidden()`). Hides the toolbar for this
         // destination only — the NavigationStack survives so push / pop
@@ -706,7 +708,7 @@ private struct PerTabContent: View {
             // bottom-bar modifier below) pins to the correct edge.
             // Inverting the order leaves the bar latched to where the
             // tab bar *used to be* — visually mid-screen.
-            .modifier(HideTabBarOnPushModifier(isRoot: isRoot, forceHide: forceHideTabBar))
+            .modifier(HideTabBarOnPushModifier(isRoot: isRoot, forceHide: forceHideTabBar, forceShow: forceShowTabBar))
             .modifier(BottomBarInsetModifier(bottomBar: bottomBar))
     }
 
@@ -1025,13 +1027,16 @@ private struct BottomBarInsetModifier: ViewModifier {
 ///     chrome sentinel as `hide_tab_bar`. Lets the dev override the
 ///     default for cases where path-depth alone doesn't capture intent.
 ///
-/// Bar hides if EITHER is true.
+/// Bar hides if EITHER is true, unless the screen asked to keep it with
+/// `tabBarOptions()->hidden(false)` (`show_tab_bar`): then a pushed level
+/// keeps the bar, as a list a user moves around in wants it.
 private struct HideTabBarOnPushModifier: ViewModifier {
     let isRoot: Bool
     let forceHide: Bool
+    var forceShow: Bool = false
 
     func body(content: Content) -> some View {
-        if isRoot && !forceHide {
+        if !forceHide && (isRoot || forceShow) {
             content
         } else {
             content
