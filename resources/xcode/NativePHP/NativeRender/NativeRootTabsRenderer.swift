@@ -262,7 +262,23 @@ struct NativeRootTabsRenderer: View {
             )
         }
 
-        return TabView(selection: $selection) {
+        // A tap on the tab already shown sets the selection to what it
+        // already is; `$selection` would swallow it. iOS's own tabs go
+        // back to the tab's first screen then, so the binding catches
+        // the repeat and empties that tab's path. The coordinator's
+        // onPathChange then sends PHP one system back per level, as a
+        // swipe back does.
+        let reselecting = Binding<String>(
+            get: { selection },
+            set: { newId in
+                if newId == selection {
+                    popToRoot(tabId: newId, tabs: tabs)
+                }
+                selection = newId
+            }
+        )
+
+        return TabView(selection: reselecting) {
             // Regular (non-search) tabs via ForEach. Keyed off the
             // stable PHP-side id so SwiftUI preserves identity across
             // publishes (was previously keyed off enumerated offset,
@@ -431,6 +447,16 @@ struct NativeRootTabsRenderer: View {
         .onChange(of: selection) { newId in
             activateSelection(newId, tabs: tabs, owningId: owningId)
         }
+    }
+
+    /// The shown tab tapped again: its pushed screens go, as on iOS's
+    /// own tab bars. The search tab and a tab with no URL keep theirs.
+    private func popToRoot(tabId: String, tabs: [NativeUINode]) {
+        guard let idx = tabs.firstIndex(where: { $0.props.getString("id", default: "") == tabId }) else { return }
+        let tab = tabs[idx]
+        let rootUri = tab.props.getString("url", default: "")
+        guard !rootUri.isEmpty, !tab.props.getBool("search") else { return }
+        tabBag.coordinator(forIdx: idx, rootUri: rootUri).popToRoot()
     }
 
     private func requestTabActivation(at index: Int, tabs: [NativeUINode], owningId: String) {

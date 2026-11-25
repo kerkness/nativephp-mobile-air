@@ -207,6 +207,15 @@ final class PerTabNavigationCoordinator: ObservableObject {
         scheduleEviction()
     }
 
+    /// The tab's button tapped while the tab is shown: back to its first
+    /// screen. Only the path changes here; `onPathChange` sees it differ
+    /// from PHP's snapshot and sends one system back per level, so PHP
+    /// pops its stack as it would for a swipe back.
+    func popToRoot() {
+        guard !path.isEmpty else { return }
+        path = []
+    }
+
     /// Called from the renderer's `.onChange(of: coord.path)` for this
     /// tab. If the path matches our last PHP-driven snapshot the change
     /// is ours (no-op); otherwise a user-initiated swipe-back / system-
